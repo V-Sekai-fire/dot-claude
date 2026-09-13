@@ -8,7 +8,6 @@
     "allow": [
       "Bash(env)",
       "Bash(echo \"--- exit $? ---\")",
-      "Read(//c/Users/ernes/.runpod/**)",
       "Read(G:/Shared drives/0360 - Datasets Allowlist/**)",
       "Read(//g/Shared drives/0360 - Datasets Allowlist/**)"
     ]
