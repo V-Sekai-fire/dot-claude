@@ -1,0 +1,25 @@
+name: Checks
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main/main]
+
+jobs:
+  # A SKILL WITH BROKEN FRONTMATTER IS AN ABSENT SKILL. The loader skips it and says
+  # nothing, so the failure looks like the skill simply never applying. The gate also
+  # holds the permission set to CLAUDE.md's rule: add the narrowest thing that answers
+  # the question, never a bare wildcard.
+  skills:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      # Controls first: nine of them, and every one must reject known-broken input.
+      - run: python scripts/check_skills.py --self-test
+      - run: python scripts/check_skills.py
