@@ -1,6 +1,6 @@
 ---
 name: bao-fly-mtls-tunnel
-description: Reach the weftspun-bao OpenBao on Fly.io from a desk that has a `.bao-creds-<host>` bundle. Trigger when a task needs an OpenBao token, an SSH cert for the weftspun-bao 2222 tunnel, or to read/write the `agents` KV, and `bao`/`op` report "not signed in", the listener returns `tls: certificate required`, or a fly-issued SSH cert is rejected on 2222. Covers the creds-bundle layout, the mutual-TLS env, reaching the internal-only API through `fly proxy`, minting a fresh tunnel cert from the SSH signer, and the traps (private CA, 1 h cert TTL, no TTY for `op signin`, don't weaken TLS).
+description: Reach the weftspun-bao OpenBao on Fly.io from a desk that has a `.bao-creds-<host>` bundle, and mint GitHub App installation tokens from its GitHub secrets engine. Trigger when a task needs an OpenBao token, a GitHub token to push/PR to V-Sekai-fire, an SSH cert for the weftspun-bao 2222 tunnel, or to read/write the `agents` KV, and `bao`/`op` report "not signed in", the listener returns `tls: certificate required`, or a fly-issued SSH cert is rejected on 2222. Covers the creds-bundle layout, the mutual-TLS env, reaching the internal-only API through `fly proxy`, minting a tunnel cert from the SSH signer, minting GitHub tokens via `bao read github/token`, and the traps (private CA, 1 h cert TTL, no TTY for `op signin`, the plugin User-Agent ldflag, what survives an `op`/Fly logout, don't weaken TLS).
 ---
 
 # Reaching weftspun-bao (OpenBao on Fly) over mTLS
@@ -76,7 +76,43 @@ it does not give a shell. Use it for port-forwarding to 2222:
 - **Env does not cross the shell boundary.** A `! export …` in the prompt does not reach the
   agent's own Bash tool; hand credentials over as files (the bundle) or a service-account token.
 
+## Mint a GitHub token (the `github/` secrets engine)
+
+bao has a GitHub App installation-token engine at `github/` (martinbaillie's
+`vault-plugin-secrets-github`, baked into the image — `7-service/openbao/Dockerfile.fdb`).
+Mint with the desk token (its cert role carries the `github-pr` policy — no root needed):
+
+    bao read -field=token github/token installation_id=160444793      # V-Sekai-fire org install
+    # then: git push https://x-access-token:<ghs_...>@github.com/V-Sekai-fire/<repo>.git <branch>
+
+Installation ids: V-Sekai-fire `160444793`, V-Sekai `162792540`. `org_name=` also works now.
+The token is a `ghs_` installation token (contents+pull_requests write); it expires in ~1 h.
+
+**The User-Agent trap.** GitHub 403s any request with no `User-Agent`. The plugin sets it to
+its build-stamped `projectName`, injected by an ldflag — and the module path is
+`.../vault-plugin-secrets-github/v2`, so the `-X` target is
+`github.com/martinbaillie/vault-plugin-secrets-github/v2/github.projectName=...`. Build without
+it (or with the `/v2` missing) and every mint 403s with an empty UA. `bao read github/info`
+must show `project_name` set, not `n/a`.
+
+Rebuilding the image changes the plugin binary's sha, so after a redeploy: re-register
+(`bao write sys/plugins/catalog/secret/github sha256=<new> command=vault-plugin-secrets-github`)
+and `bao write sys/plugins/reload/backend plugin=github`. The mount and its App config persist
+in FoundationDB; only the catalog sha needs refreshing.
+
+## What survives an `op` / Fly logout
+
+- The **Fly CLI token is cached on the machine** (`~/.fly/config.yml`) and survives a web/desktop
+  logout, so `fly proxy` / `fly ssh` keep working until that token is revoked.
+- The **desk bundle mints without `op` or root**: cert-login → a `github-pr` token → `github/token`.
+  Routine bao access and GitHub minting survive an `op` logout.
+- What an `op` logout **blocks**: reading the root token, the **unseal key**, or the App PEM from
+  1Password. So a redeploy/restart **seals** bao and it cannot be unsealed until `op` is back
+  (`bao write sys/unseal key=@op://.../2hhc…/unseal_key`), and root-only ops (enable engines, edit
+  policies) are unavailable. No Tailscale client here means Fly is the only route to the internal API.
+
 ## Not in scope
 
-Issuing the bundle itself (the CSR → `client-fullchain.pem` enrollment) and the GitHub App
-persona for pushing commits are separate; see [[github-app-persona]] for the git side.
+Issuing the bundle itself (the CSR → `client-fullchain.pem` enrollment) is separate. For pushing
+commits as the App identity without this engine (signing the JWT locally from the PEM), see
+[[github-app-persona]].
