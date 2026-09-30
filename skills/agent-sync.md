@@ -20,7 +20,7 @@ Read/write policy is a **separate** decision after identity lands. A newly-provi
 
 ## The coordination store
 
-Backing: **OpenBao KV v2** mount `agents/` on `https://weftspun-bao.stonecat-ratio.ts.net:8200` (Tailscale-private, mTLS enforced). Deployed per RFD 2195.
+Backing: **OpenBao KV v2** mount `agents/` on weftspun-bao (Tailscale-private, mTLS enforced), deployed per RFD 2195. The tailnet node takes a new numeric suffix on each redeploy (`weftspun-bao-8.stonecat-ratio.ts.net` at the time of writing) while the server cert keeps its original names, so address the online node and pin `BAO_TLS_SERVER_NAME=weftspun-bao.internal`; the `bao-fly-mtls-tunnel` skill has the lookup and the Fly route.
 
 - One row per live agent, keyed by full CN (`agents/<cn>`).
 - Row payload is one JSON value at field `row`.
@@ -54,23 +54,28 @@ Backing: **OpenBao KV v2** mount `agents/` on `https://weftspun-bao.stonecat-rat
 ```sh
 op item get <1P-item-id> --format json | \
   jq -r '.fields[]|select(.label=="notesPlain").value' > /tmp/b.json
-mkdir -p ~/.bao-creds && chmod 700 ~/.bao-creds
-jq -r .cert     /tmp/b.json > ~/.bao-creds/client-cert.pem
-jq -r .key      /tmp/b.json > ~/.bao-creds/client-key.pem
-jq -r .ca_chain /tmp/b.json > ~/.bao-creds/ca-intermediate.pem
-chmod 600 ~/.bao-creds/*.pem
+mkdir -p ~/.bao-creds-<agent> && chmod 700 ~/.bao-creds-<agent>
+jq -r .cert     /tmp/b.json > ~/.bao-creds-<agent>/client-cert.pem
+jq -r .key      /tmp/b.json > ~/.bao-creds-<agent>/client-key.pem
+jq -r .ca_chain /tmp/b.json > ~/.bao-creds-<agent>/ca-intermediate.pem
+chmod 600 ~/.bao-creds-<agent>/*.pem
 rm /tmp/b.json
 
 # CRITICAL: server trusts only Root CA and expects the intermediate FROM the client.
 # Concat leaf + intermediate; pass the fullchain to --cert.
-cat ~/.bao-creds/client-cert.pem ~/.bao-creds/ca-intermediate.pem \
-  > ~/.bao-creds/client-fullchain.pem
+cat ~/.bao-creds-<agent>/client-cert.pem ~/.bao-creds-<agent>/ca-intermediate.pem \
+  > ~/.bao-creds-<agent>/client-fullchain.pem
 
-export BAO_ADDR=https://weftspun-bao.stonecat-ratio.ts.net:8200
-export BAO_CACERT=~/.bao-creds/ca-chain.pem                # or ca-root.pem
-export BAO_CLIENT_CERT=~/.bao-creds/client-fullchain.pem
-export BAO_CLIENT_KEY=~/.bao-creds/client-key.pem
-bao login -method=cert name=agents-weftspun
+export BAO_ADDR=https://weftspun-bao-8.stonecat-ratio.ts.net:8200   # the online node; see above
+export BAO_TLS_SERVER_NAME=weftspun-bao.internal
+export BAO_CACERT=~/.bao-creds-<agent>/ca-chain.pem                # or ca-root.pem
+export BAO_CLIENT_CERT=~/.bao-creds-<agent>/client-fullchain.pem
+export BAO_CLIENT_KEY=~/.bao-creds-<agent>/client-key.pem
+# No name=: bao picks the agent's own auth/cert/certs/<agent> entry. The shared
+# agents-weftspun entry is deleted (RFD 2195), and naming it answers
+# "invalid certificate or no client certificate supplied" for a cert that is fine.
+bao login -method=cert -no-store -token-only > ~/.bao-creds-<agent>/session-token
+export BAO_TOKEN=$(cat ~/.bao-creds-<agent>/session-token)
 bao status                                                  # should print unsealed
 ```
 

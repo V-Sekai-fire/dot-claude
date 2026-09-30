@@ -1,6 +1,6 @@
 ---
 name: bao-fly-mtls-tunnel
-description: Reach the weftspun-bao OpenBao on Fly.io from a desk that has a `.bao-creds-<host>` bundle, and mint GitHub App installation tokens from its GitHub secrets engine. Trigger when a task needs an OpenBao token, a GitHub token to push/PR to V-Sekai-fire, an SSH cert for the weftspun-bao 2222 tunnel, or to read/write the `agents` KV, and `bao`/`op` report "not signed in", the listener returns `tls: certificate required`, or a fly-issued SSH cert is rejected on 2222. Covers the creds-bundle layout, the mutual-TLS env, reaching the internal-only API through `fly proxy`, minting a tunnel cert from the SSH signer, minting GitHub tokens via `bao read github/token`, and the traps (private CA, 1 h cert TTL, no TTY for `op signin`, the plugin User-Agent ldflag, what survives an `op`/Fly logout, don't weaken TLS).
+description: Reach the weftspun-bao OpenBao on Fly.io from a desk that has a `.bao-creds-<host>` bundle, and mint GitHub App installation tokens from its GitHub secrets engine. Trigger when a task needs an OpenBao token, a GitHub token to push/PR to V-Sekai-fire, an SSH cert for the weftspun-bao 2222 tunnel, or to read/write the `agents` KV, and `bao`/`op` report "not signed in", the listener returns `tls: certificate required`, cert login answers `invalid certificate or no client certificate supplied`, or a fly-issued SSH cert is rejected on 2222. Covers the creds-bundle layout, the mutual-TLS env, reaching the internal-only API over Tailscale or through `fly proxy`, refreshing the session token by cert login, minting a tunnel cert from the SSH signer, minting GitHub tokens via `bao read github/token`, and the traps (private CA, 1 h cert TTL, no TTY for `op signin`, the plugin User-Agent ldflag, what survives an `op`/Fly logout, don't weaken TLS).
 ---
 
 # Reaching weftspun-bao (OpenBao on Fly) over mTLS
@@ -8,8 +8,9 @@ description: Reach the weftspun-bao OpenBao on Fly.io from a desk that has a `.b
 `weftspun-bao` is an OpenBao cluster on Fly.io. Its API (`https://weftspun-bao.internal:8200`)
 is **internal only** — the sole public service is SSH on **2222**. The listener requires
 **mutual TLS**, so a token alone is not enough; every request also presents a client cert. A
-desk that has been enrolled carries everything in a `~/contract-manifest/.bao-creds-<host>-<id>/`
-directory (mode 700).
+desk that has been enrolled carries everything in a `~/.bao-creds-<host>-<id>/` directory
+(mode 700), outside any checkout, so deleting a repo client does not take the desk's identity
+with it.
 
 ## The creds bundle
 
@@ -18,7 +19,7 @@ directory (mode 700).
       client-fullchain.pem     # mTLS client cert (leaf + intermediate)
       fedora-cad853-key.pem     # mTLS client private key (0600)
       fedora-cad853-cert.pem    # leaf only; .csr is the request it came from
-      session-token            # a SCOPED bao token (policies: agents-rw default ssh-bao-tunnel), ~12 h
+      session-token            # a SCOPED bao token (policies: agents-rw default github-pr ssh-bao-tunnel), 24 h
       ssh-key / ssh-key.pub    # the desk's SSH keypair for the 2222 tunnel
       ssh-key-cert.pub         # a signed SSH cert — SHORT-LIVED (~1 h); re-mint when expired
       known_hosts              # 2222 host key
@@ -27,24 +28,46 @@ Prefer the bundle's `session-token` over any root token from 1Password: it is sc
 already the right identity (`cert-fedora-cad853`). Do not extract the root credential unless
 a task genuinely needs `sys` — and shred it after.
 
-## Talk to the API (through a local tunnel)
+## Talk to the API
 
-The internal address does not resolve off the Fly network, so proxy the port and pin the
-cert's name — this verifies TLS properly, no skip:
+The internal address does not resolve off the Fly network. Two routes reach it; both verify
+TLS properly by pinning the cert's name, no skip.
 
-    D=~/contract-manifest/.bao-creds-fedora-cad853
+**Tailscale** (no Fly login needed). The node joins the tailnet under a new numeric suffix on
+each redeploy (`weftspun-bao-8` at the time of writing), and the older names stay listed as
+offline. Pick the online one:
+
+    tailscale status --json | jq -r '.Peer[] | select(.HostName=="weftspun-bao" and .Online) | .DNSName'
+
+The server cert names `weftspun-bao.stonecat-ratio.ts.net` and `-1` only, not the current
+suffix, so pin the name the cert does carry:
+
+    D=~/.bao-creds-fedora-cad853
+    export BAO_ADDR=https://weftspun-bao-8.stonecat-ratio.ts.net:8200            BAO_TLS_SERVER_NAME=weftspun-bao.internal            BAO_CACERT=$D/root-ca.pem            BAO_CLIENT_CERT=$D/client-fullchain.pem            BAO_CLIENT_KEY=$D/fedora-cad853-key.pem            BAO_TOKEN=$(cat $D/session-token)
+
+**Fly** (needs a Fly login on the desk). Proxy the port and point at localhost, same pinning:
+
     fly proxy 8200:8200 -a weftspun-bao &          # localhost:8200 -> weftspun-bao.internal:8200
-    export BAO_ADDR=https://127.0.0.1:8200 \
-           BAO_TLS_SERVER_NAME=weftspun-bao.internal \
-           BAO_CACERT=$D/root-ca.pem \
-           BAO_CLIENT_CERT=$D/client-fullchain.pem \
-           BAO_CLIENT_KEY=$D/fedora-cad853-key.pem \
-           BAO_TOKEN=$(cat $D/session-token)
-    bao token lookup            # display_name cert-fedora-cad853, policies [agents-rw default ssh-bao-tunnel]
+    export BAO_ADDR=https://127.0.0.1:8200         # plus the same five variables as above
 
-`BAO_TLS_SERVER_NAME` is what lets you point `BAO_ADDR` at `127.0.0.1` while the cert stays
-valid for `weftspun-bao.internal` — no `/etc/hosts` edit, no `-tls-skip-verify`. The token
+Either way:
+
+    bao token lookup            # display_name cert-fedora-cad853, policies [agents-rw default github-pr ssh-bao-tunnel]
+
+`BAO_TLS_SERVER_NAME` is what lets `BAO_ADDR` name a host the cert does not list while the cert
+stays valid for `weftspun-bao.internal` — no `/etc/hosts` edit, no `-tls-skip-verify`. The token
 cannot `bao secrets list` (no `sys/mounts`); that 403 is expected, not a misconfiguration.
+
+## Refresh the session token (cert login)
+
+When `bao token lookup` fails, the token has expired. Log in again with the bundle's cert, and
+**name no cert-auth entry**:
+
+    bao login -method=cert -no-store -token-only > $D/session-token
+
+With no `name=`, bao picks the desk's own entry (`auth/cert/certs/<agent>`, RFD 2195: one entry
+per agent, no shared wildcard entry). `-no-store` keeps the login out of the shared
+`~/.bao-token`, which a peer session on the same desk would otherwise overwrite.
 
 ## Mint a fresh SSH tunnel cert
 
@@ -65,6 +88,10 @@ it does not give a shell. Use it for port-forwarding to 2222:
   `remote error: tls: certificate required`. A token and CA are not enough.
 - **Private CA.** The cluster's cert is signed by `chibifire.com Root CA`. Verify against
   `root-ca.pem`; `-tls-skip-verify` is both wrong and blocked by the auto-mode classifier.
+- **`name=agents-weftspun` fails as if the cert were bad.** That shared entry was deleted
+  (RFD 2195), and naming any entry that does not trust the cert answers
+  `invalid certificate or no client certificate supplied`. The cert is fine and no new CSR is
+  needed; drop `name=`.
 - **Tunnel cert TTL ~1 h.** Re-mint (above) whenever `ssh-keygen -L -f ssh-key-cert.pub` shows
   it expired.
 - **A Fly-issued SSH cert (`fly ssh issue`) does not open 2222.** That sshd sets
@@ -109,7 +136,9 @@ in FoundationDB; only the catalog sha needs refreshing.
 - What an `op` logout **blocks**: reading the root token, the **unseal key**, or the App PEM from
   1Password. So a redeploy/restart **seals** bao and it cannot be unsealed until `op` is back
   (`bao write sys/unseal key=@op://.../2hhc…/unseal_key`), and root-only ops (enable engines, edit
-  policies) are unavailable. No Tailscale client here means Fly is the only route to the internal API.
+  policies) are unavailable.
+- A **Fly logout** closes only the `fly proxy` route; the Tailscale route (above) does not use
+  Fly credentials.
 
 ## Not in scope
 
