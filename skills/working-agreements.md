@@ -94,9 +94,13 @@ Blocklist table in CLAUDE.md; arguments in BLOCKLIST.md; `check_blocklist_detail
 - OpenUSD `.usda` for text-editable; ZStandard parquet for bulk storage.
 - `.zip` and `.gzip` are not acceptable. `.usdz` is exempt (it is a stored uncompressed zip, USD's interchange package).
 
+## Standard practices
+
+RFD 2294's "Interchangeable sessions" (`2-contract/manuals-weftspun/rfd/2294-*.exs`) is the one home for the practices every session follows: attribution and commit authorship, Elixir automation, CPU-only cloud work with software GPU emulators blocklisted, the GPU Cloud and GPU-Free Cloud split, capability-scoped workers, contact sheets as CI-artifact videos, and body-only garment fits. RFD 2295 owns the reply form: confidence tags, ISO 8601 intervals, and the closing known-unknown questions. Read them there; do not restate them here or in memory.
+
 ## Attribution
 
-Claude does not write attribution lines in commits, PRs, or docs (`## Claude does not write attribution`). `settings.json` in this repo disables it.
+No agent attribution in commits, PRs, comments, or docs; RFD 2294 states the rule. `settings.json` here turns the tool's own attribution off, and `hooks/strip_claude_footer.py` prompts a read-back after every GitHub create, because the connector appends a footer anyway.
 
 ## Permissions
 
