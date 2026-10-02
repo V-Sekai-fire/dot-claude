@@ -14,5 +14,18 @@
   },
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__github__(create_pull_request|create_pull_request_with_copilot|add_issue_comment|add_reply_to_pull_request_comment|add_comment_to_pending_review|pull_request_review_write|issue_write)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/strip_claude_footer.py\""
+          }
+        ]
+      }
+    ]
   }
 }
