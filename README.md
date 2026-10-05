@@ -1,39 +1,18 @@
-# .claude
+# dot-claude
 
-The agent configuration for the weftspun workspace, as a repository. Checked out at `.claude/`
-at the workspace root, which is where Claude Code looks, so it applies to every project on
-every side of the hexagon.
+The workspace's agent configuration, checked out at `.claude/`: the reviewed permission set, the skills and the attribution-stripping hook.
+
+## What it is for
+
+The agent harness reads `.claude/` at the workspace root, so this checkout applies to every project in the workspace. `settings.json` is the shared, reviewed permission set, and a desk's own `settings.local.json` stays untracked beside it. A permission arrives as a diff somebody approved rather than through a link. The working agreements live in `manuals-weftspun`, RFD 2294 states the standard practices, and the goal manifest links some RFDs in here as skills.
+
+## Build
 
 ```sh
-repo sync .claude
+python scripts/check_skills.py --self-test
+python scripts/check_skills.py
 ```
 
-| | |
-|---|---|
-| `CLAUDE.md` | the working agreements, and the rule for adding a permission |
-| `settings.json` | the workspace's settings: tracked, shared, reviewed |
-| `settings.local.json` | one desk's answers. Gitignored, and stays that way |
+## Licence
 
-## Why a repository
-
-It was going to be a `linkfile` into `0-infrastructure/logbook`, and that was refused: a
-symlink is invisible to every check here. `repo status` cannot see drift in it, nothing gates
-it, and one repository's permission settings would quietly become every project's.
-
-A repository is ordinary instead. Permissions arrive in a diff somebody approved, a widening
-has a commit behind it, and `repo status` reports this like anything else. The manifest entry
-is `name="dot-claude" path=".claude"`. The path is fixed by Claude Code, which reads that and
-nothing else, so the name gave way: a repository called `.claude` is hidden from an ordinary
-listing and clones into a directory most shells will not show you.
-
-## Why not in the manifest repository
-
-`CLAUDE.md` was in `weftspun/weftspun` and was read there, because `meta` put that checkout at
-the workspace root. `repo` does not — it clones the manifest to `.repo/manifests`, where
-nothing reads upward from. The file would have kept parsing, kept being committed to, and
-stopped applying, with no error anywhere — the same shape as the failure the manifest's own
-comment records about `path="."`.
-
-`0-infrastructure/logbook` holds the record: what was measured, what was retracted, and the
-failure modes behind these rules. This holds what applies going forward. `CLAUDE.md` says why
-the two are separate.
+MIT; see `LICENSE`.
